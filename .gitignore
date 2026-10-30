@@ -1,0 +1,22 @@
+# 编译产物
+Objects/
+Listings/
+DebugConfig/
+*.uvguix.*
+*.o
+*.crf
+*.d
+*.axf
+*.hex
+*.bin
+*.lst
+*.map
+*.htm
+*.dep
+*.bak
+*.iex
+*.lnp
+
+# 编辑器
+.vscode/
+.idea/
