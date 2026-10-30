@@ -1,6 +1,7 @@
 #include "bsp_lcd.h"
 #include "pinmap.h"
 #include "stm32f10x.h"
+#include "Delay.h"
 
 /* ---- SPI1 软总线接口（与 W25Q 共用 PA5/PA6/PA7，各自独立 CS） ---- */
 
@@ -77,17 +78,17 @@ void LCD_Init(void)
     SPI1_Init();
     LCD_Ctrl_Init();
 
-    /* 硬件复位 */
+    /* 硬件复位（ST7789 要求 RESX 低电平 >=10us，之后等待 >=120ms 再发命令） */
     GPIO_ResetBits(LCD_RES_PORT, LCD_RES_PIN);
-    { volatile uint32_t d; for (d = 0; d < 100000; d++); }
+    Delay_ms(10);
     GPIO_SetBits(LCD_RES_PORT, LCD_RES_PIN);
-    { volatile uint32_t d; for (d = 0; d < 100000; d++); }
+    Delay_ms(120);
 
     /* ST7789V 初始化序列 */
     LCD_WriteCmd(0x01);   /* 软件复位 */
-    { volatile uint32_t d; for (d = 0; d < 200000; d++); }
+    Delay_ms(120);        /* 软复位后必须等待 120ms */
     LCD_WriteCmd(0x11);   /* 退出休眠 */
-    { volatile uint32_t d; for (d = 0; d < 200000; d++); }
+    Delay_ms(120);
     LCD_WriteCmd(0x36); LCD_WriteData(0x00);   /* MADCTL */
     LCD_WriteCmd(0x3A); LCD_WriteData(0x05);   /* 16bit RGB565 */
     LCD_WriteCmd(0xB2); LCD_WriteData(0x0C); LCD_WriteData(0x0C);
@@ -125,6 +126,10 @@ void LCD_SetBacklight(uint8_t on)
 
 void LCD_SetWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 {
+    /* 加偏移(见 bsp_lcd.h: 240x240 玻璃一般需要 Y 偏移 80) */
+    x0 += LCD_X_OFFSET; x1 += LCD_X_OFFSET;
+    y0 += LCD_Y_OFFSET; y1 += LCD_Y_OFFSET;
+
     LCD_WriteCmd(0x2A);
     LCD_WriteData(x0 >> 8); LCD_WriteData(x0 & 0xFF);
     LCD_WriteData(x1 >> 8); LCD_WriteData(x1 & 0xFF);

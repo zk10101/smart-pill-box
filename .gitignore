@@ -20,3 +20,7 @@ DebugConfig/
 # 编辑器
 .vscode/
 .idea/
+
+# Keil 命令行构建日志
+build.log
+*.build_log.htm

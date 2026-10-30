@@ -16,8 +16,10 @@ void Motor_Init(void)
     TIM_OCInitTypeDef        oc;
     NVIC_InitTypeDef         nvic;
 
-    /* --- GPIO --- */
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB | RCC_APB2Periph_GPIOD | RCC_APB2Periph_GPIOC, ENABLE);
+    /* --- GPIO ---
+     * STEP=PB8(TIM4_CH3) DIR=PB9  EN=PC12(经 245 的 A3 网络)
+     * 原理图上 PD2 为空脚，EN 不在 PD2，见 pinmap.h 说明 */
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB | RCC_APB2Periph_GPIOC, ENABLE);
     g.GPIO_Mode  = GPIO_Mode_AF_PP;                 /* STEP 用 TIM4_CH3 复用推挽 */
     g.GPIO_Speed = GPIO_Speed_50MHz;
     g.GPIO_Pin   = MOTOR_STEP_PIN;
@@ -66,8 +68,17 @@ void Motor_Init(void)
 
 void Motor_Enable(uint8_t en)
 {
-    if (en) GPIO_SetBits(MOTOR_EN_PORT, MOTOR_EN_PIN);    /* EN 高=使能(经245电平转换) */
+    /* 经 74HCT245(非反相) 到驱动器 EN。
+     * 驱动器 EN 极性由 MOTOR_EN_ACTIVE_LOW 决定（见 app_config.h）：
+     *   低有效(MOTOR_EN_ACTIVE_LOW=1): 使能输出低电平
+     *   高有效(MOTOR_EN_ACTIVE_LOW=0): 使能输出高电平 */
+#if MOTOR_EN_ACTIVE_LOW
+    if (en) GPIO_ResetBits(MOTOR_EN_PORT, MOTOR_EN_PIN);
+    else    GPIO_SetBits(MOTOR_EN_PORT, MOTOR_EN_PIN);
+#else
+    if (en) GPIO_SetBits(MOTOR_EN_PORT, MOTOR_EN_PIN);
     else    GPIO_ResetBits(MOTOR_EN_PORT, MOTOR_EN_PIN);
+#endif
 }
 
 uint8_t Motor_IsFault(void)

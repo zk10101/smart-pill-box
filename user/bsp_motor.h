@@ -11,9 +11,11 @@ typedef enum {
     MOTOR_BUSY          /* 忙(上一次出药未结束) */
 } MotorStatus;
 
-/* STEP=PB8(TIM4_CH3 脉冲), DIR=PB9, EN=PD2, FAULT=PC13 */
+/* STEP=PB8(TIM4_CH3 脉冲), DIR=PB9, EN=PC12, FAULT=PC13
+ * 对应 74HCT245 电平转换: A1=PB8->B1=STEP, A2=PB9->B2=DIR, A3=PC12->B3=EN
+ * 注意: 原 PD2 在原理图上为空脚，切勿再使用 */
 void Motor_Init(void);
-/* 出药 N 步：使能 -> 发脉冲 -> 到位/超时/故障停止。返回最终状态 */
+/* 出药 N 步：使能 -> 发脉冲 -> 到位/超时/故障停止。返回最终状态（RUNNING=开始成功） */
 MotorStatus Motor_Dispense(uint32_t steps);
 /* 紧急停止 */
 void Motor_Stop(void);

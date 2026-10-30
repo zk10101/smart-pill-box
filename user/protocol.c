@@ -48,6 +48,8 @@ uint8_t Protocol_ParseByte(ProtoParser *ps, uint8_t byte, ProtoFrame *out)
         ps->idx = 0;
         if (ps->len > PROTO_MAX_LEN) {
             ps->state = 0;          /* 非法长度，重同步 */
+        } else if (ps->len == 0) {
+            ps->state = 5;          /* 无数据帧(如心跳)，直接等校验字节 */
         } else {
             ps->state = 4;
         }

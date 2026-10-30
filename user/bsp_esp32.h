@@ -20,5 +20,7 @@ void ESP32_SetRxHandler(ESP32_RxHandler handler);
 
 /* 供中断调用的字节接收入口 */
 void ESP32_OnRxByte(uint8_t byte);
+/* 接收环形缓冲溢出计数（0 表示没丢过字节，调试用） */
+uint16_t ESP32_GetRxOverflow(void);
 
 #endif

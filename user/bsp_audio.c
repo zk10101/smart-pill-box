@@ -36,21 +36,24 @@ static void Audio_I2S3_TxInit(void)
     I2S_Cmd(SPI3, ENABLE);
 }
 
-/* 麦克风 I2S2 从机接收（骨架，供后续扩展） */
+/* 麦克风 I2S2（预留，当前未实现数据接收）
+ * ICS-43434 是 I2S 从机：需要 MCU 作主机提供 BCLK/WS，
+ * 因此 CK/WS 必须是复用推挽输出，SD 为输入。 */
 static void Audio_I2S2_RxInit(void)
 {
     GPIO_InitTypeDef g;
     RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOB, ENABLE);
     RCC_APB1PeriphClockCmd(RCC_APB1Periph_SPI2, ENABLE);
 
-    g.GPIO_Mode  = GPIO_Mode_AF_PP;
+    g.GPIO_Mode  = GPIO_Mode_AF_PP;             /* 主机模式: CK/WS 输出 */
     g.GPIO_Speed = GPIO_Speed_50MHz;
-    g.GPIO_Pin   = MIC_CK_PIN;
+    g.GPIO_Pin   = MIC_CK_PIN | MIC_WS_PIN;
     GPIO_Init(GPIOB, &g);
-    g.GPIO_Mode  = GPIO_Mode_IN_FLOATING;
-    g.GPIO_Pin   = MIC_WS_PIN | MIC_SD_PIN;
+    g.GPIO_Mode  = GPIO_Mode_IN_FLOATING;       /* SD 数据输入 */
+    g.GPIO_Pin   = MIC_SD_PIN;
     GPIO_Init(GPIOB, &g);
-    /* TODO: I2S2 从机接收配置 */
+    /* TODO: 按 I2S_Mode_MasterRx + I2S2_Init 实现录音，
+     *       当前仅保留引脚配置，不占用 I2S2 外设。 */
 }
 
 void Audio_Init(void)
@@ -62,7 +65,8 @@ void Audio_Init(void)
 
 void Audio_PlaySamples(const int16_t *samples, uint16_t count)
 {
-    /* 简化实现：左声道，右声道补0 */
+    /* I2S 每帧包含左、右两个声道槽；MAX98357A 取左/右任一即可，
+     * 这里把单声道样本同时写入两个槽，保证 48kHz 采样率正确 */
     while (count--) {
         while (SPI_I2S_GetFlagStatus(SPI3, SPI_I2S_FLAG_TXE) == RESET);
         SPI_I2S_SendData(SPI3, (uint16_t)*samples);

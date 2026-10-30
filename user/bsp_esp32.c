@@ -2,10 +2,12 @@
 #include "pinmap.h"
 #include "app_config.h"
 #include "stm32f10x.h"
+#include "Delay.h"
 
 static uint8_t       rx_ring[RX_RING_SIZE];
 static volatile uint16_t rx_head = 0;   /* 写指针(中断) */
 static volatile uint16_t rx_tail = 0;   /* 读指针(主循环) */
+static volatile uint16_t rx_overflow = 0;   /* 环形缓冲溢出计数(调试用) */
 
 static ProtoParser  parser;
 static ProtoFrame   rx_frame;
@@ -24,7 +26,8 @@ void ESP32_Init(void)
     g.GPIO_Speed = GPIO_Speed_50MHz;
     g.GPIO_Pin   = NET_EN_PIN;
     GPIO_Init(NET_EN_PORT, &g);
-    ESP32_Power(0);
+    ESP32_Power(0);             /* 先拉低 EN 让 ESP32 保持复位 */
+    Delay_ms(50);               /* 复位脉宽（EN 低电平） */
 
     /* TX/RX */
     g.GPIO_Mode  = GPIO_Mode_AF_PP;
@@ -50,7 +53,8 @@ void ESP32_Init(void)
     NVIC_Init(&n);
 
     USART_Cmd(USART1, ENABLE);
-    ESP32_Power(1);
+    ESP32_Power(1);             /* 释放复位，ESP32 开始启动 */
+    Delay_ms(100);              /* 等待 ESP32 启动/串口稳定，避免上电丢帧 */
 }
 
 void ESP32_Power(uint8_t on)
@@ -82,8 +86,12 @@ void ESP32_OnRxByte(uint8_t byte)
     if (next != rx_tail) {          /* 未满 */
         rx_ring[rx_head] = byte;
         rx_head = next;
+    } else {
+        rx_overflow++;              /* 缓冲满：丢弃并计数（主机轮询太慢的征兆） */
     }
 }
+
+uint16_t ESP32_GetRxOverflow(void) { return rx_overflow; }
 
 void ESP32_Poll(void)
 {
@@ -98,6 +106,10 @@ void ESP32_Poll(void)
 
 void USART1_IRQHandler(void)
 {
+    /* 溢出错误(ORE)：必须“读 SR 再读 DR”才能清除，否则会持续进中断 */
+    if (USART_GetFlagStatus(USART1, USART_FLAG_ORE) != RESET) {
+        (void)USART_ReceiveData(USART1);
+    }
     if (USART_GetITStatus(USART1, USART_IT_RXNE) != RESET) {
         uint8_t b = (uint8_t)USART_ReceiveData(USART1);
         ESP32_OnRxByte(b);

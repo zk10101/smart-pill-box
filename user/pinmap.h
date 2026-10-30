@@ -5,7 +5,8 @@
  * 智能药盒 引脚分配表（依据嘉立创原理图 V1.0 逐脚核对）
  * 主控: STM32F103RCT6 (LQFP64, 256K Flash / 48K RAM)
  * 注意: PA15/PB3/PB4 是 JTAG 引脚，本工程已改用 SWD，
- *       需在 AFIO 中关闭 JTAG(见 bsp_gpio 全局配置)
+ *       关闭 JTAG 的动作在 bsp_audio.c 的 Audio_ReleaseJTAG()
+ *       （GPIO_PinRemapConfig(GPIO_Remap_SWJ_JTAGDisable, ENABLE)）
  * ============================================================
  */
 
@@ -20,14 +21,18 @@
 #define KEY_BACK_PIN        GPIO_Pin_3      /* PC3  KEY_BACK */
 
 /* ---------------- 步进电机（经 74HCT245 电平转换后输出） ----------------
- * 245 映射: A1->B1=STEP, A2->B2=DIR, A3->B3=EN
- * STEP 建议用定时器脉冲: PB8 = TIM4_CH3 */
+ * 原理图实测: 245 的 A0/A1/A2(引脚3/4/5) 分别接网络 A1/A2/A3，
+ *             B1/B2/B3(引脚17/16/15) 分别接 STEP/DIR/EN。
+ * 网络对应 MCU: A1=PB8(pin61)、A2=PB9(pin62)、A3=PC12(pin53)
+ * STEP 用定时器脉冲: PB8 = TIM4_CH3
+ * 注意: 原代码把 EN 写成 PD2，但原理图 PD2(pin54) 为空脚，
+ *       实际 EN 走 A3 = PC12，必须用 GPIOC Pin_12。 */
 #define MOTOR_STEP_PORT     GPIOB
 #define MOTOR_STEP_PIN      GPIO_Pin_8      /* PB8  A1 -> STEP (TIM4_CH3) */
 #define MOTOR_DIR_PORT      GPIOB
 #define MOTOR_DIR_PIN       GPIO_Pin_9      /* PB9  A2 -> DIR  */
-#define MOTOR_EN_PORT       GPIOD
-#define MOTOR_EN_PIN        GPIO_Pin_3      /* PD2  A3 -> EN   */
+#define MOTOR_EN_PORT       GPIOC
+#define MOTOR_EN_PIN        GPIO_Pin_12     /* PC12 A3 -> EN   */
 #define MOTOR_FAULT_PORT    GPIOC
 #define MOTOR_FAULT_PIN     GPIO_Pin_13     /* PC13 FAULT_N 输入(低有效) */
 
@@ -43,17 +48,20 @@
 #define LCD_DC_PORT         GPIOB
 #define LCD_DC_PIN          GPIO_Pin_0      /* PB0  LCD_DC (命令/数据) */
 #define LCD_RES_PORT        GPIOB
-#define LCD_RES_PIN         GPIO_Pin_1      /* PB1  LCD_RES(复位, 高有效) */
+#define LCD_RES_PIN         GPIO_Pin_1      /* PB1  LCD_RES(复位, 低有效) */
 #define LCD_BL_PORT         GPIOB
 #define LCD_BL_PIN          GPIO_Pin_10     /* PB10 LCD_BL (经AO3401, 低电平=亮!) */
 
-/* ---------------- SPI1 总线（LCD + W25Q64 共用） ---------------- */
+/* ---------------- SPI1 总线（LCD + W25Q64 共用） ----------------
+ * !! 硬件问题(需改板): 原理图 R46 把 LCD_SDA 接到了 SPI1_MISO(PA6)，
+ *    而 ST7789 的数据脚必须接 MOSI(PA7)。现板子上屏无法收到数据，
+ *    固件仍按 MOSI 驱动；硬件需把屏的 SDA 改到 PA7（飞线/改 R46）。 */
 #define SPI1_SCK_PORT       GPIOA
 #define SPI1_SCK_PIN        GPIO_Pin_5      /* PA5  SPI1_SCK  */
 #define SPI1_MISO_PORT      GPIOA
 #define SPI1_MISO_PIN       GPIO_Pin_6      /* PA6  SPI1_MISO (W25Q DO) */
 #define SPI1_MOSI_PORT      GPIOA
-#define SPI1_MOSI_PIN       GPIO_Pin_7      /* PA7  SPI1_MOSI (W25Q DI + LCD SDA) */
+#define SPI1_MOSI_PIN       GPIO_Pin_7       /* PA7  SPI1_MOSI (W25Q DI + 应为 LCD SDA) */
 
 /* ---------------- W25Q64 SPI Flash ----------------
  * !! 原理图问题: FLASH_CS 网络没有连到任何 MCU 引脚，画板前需补 !!
@@ -84,7 +92,10 @@
 #define BUZZER_PORT         GPIOB
 #define BUZZER_PIN          GPIO_Pin_11     /* PB11 BUZ */
 
-/* ---------------- WS2812 彩灯 ×3（单线串行） ---------------- */
+/* ---------------- WS2812 彩灯 ×3（单线串行） ----------------
+ * !! 硬件问题: 原理图把 WS2812B-2020 的 VDD 接在 3V3 上，
+ *    该型号 VDD 规格为 3.7~5.3V，3.3V 供电会偏暗/颜色异常。
+ *    建议改接 5V，并对 DIN 做电平转换(或用 3.3V 兼容灯珠)。 */
 #define WS2812_PORT         GPIOA
 #define WS2812_PIN          GPIO_Pin_11     /* PA11 WS2812_DIN */
 

@@ -20,8 +20,12 @@ typedef struct {
 } ScheduleItem;
 
 void SM_Init(void);
+/* 1ms 节拍调用（在 SysTick 里递增内部计时） */
+void SM_Tick(void);
 /* 主循环周期调用：需外部提供当前 RTC 时间（时/分/秒） */
 void SM_Run(uint8_t hour, uint8_t minute, uint8_t sec);
+/* ESP32 视觉/传感器回传“已取药”（复检通过） */
+void SM_OnPillTaken(void);
 /* 更新服药计划并持久化到内部 Flash */
 void SM_SaveSchedule(const ScheduleItem *items, uint8_t num);
 /* 用户按键事件注入 */

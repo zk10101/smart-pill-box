@@ -1,9 +1,16 @@
 #include "bsp_w25q.h"
 #include "pinmap.h"
 #include "stm32f10x.h"
+#include "Delay.h"
 
 /* 复用 bsp_lcd.c 里已初始化的 SPI1 硬件，这里只实现 W25Q 的 CS 与读写时序。
- * SPI1 初始化由 LCD_Init 完成；若先于 LCD 使用，需自行确保 SPI1 已使能。 */
+ * SPI1 初始化由 LCD_Init 完成；若先于 LCD 使用，需自行确保 SPI1 已使能。
+ *
+ * !! 硬件提示: 原理图上 FLASH_CS 网络只接了 R42 上拉和 W25Q 的 CS#，
+ *    没有接到 MCU，本驱动默认宏 FEATURE_EXT_FLASH=0 关闭。
+ *    改板补线后，把 FLASH_CS 改为实际 GPIO 并打开功能开关。 */
+
+#define W25Q_CMD_READ_SR1   0x05
 
 static void W25Q_CS(uint8_t sel)
 {
@@ -17,6 +24,28 @@ static uint8_t W25Q_SPI_RW(uint8_t byte)
     SPI_I2S_SendData(SPI1, byte);
     while (SPI_I2S_GetFlagStatus(SPI1, SPI_I2S_FLAG_RXNE) == RESET);
     return (uint8_t)SPI_I2S_ReceiveData(SPI1);
+}
+
+/* 读状态寄存器1 */
+static uint8_t W25Q_ReadSR1(void)
+{
+    uint8_t v;
+    W25Q_CS(0);
+    W25Q_SPI_RW(W25Q_CMD_READ_SR1);
+    v = W25Q_SPI_RW(0xFF);
+    W25Q_CS(1);
+    return v;
+}
+
+/* 等待芯片内部操作完成（BUSY=0），超时返回 0 */
+static uint8_t W25Q_WaitBusy(uint16_t timeout_ms)
+{
+    while ((W25Q_ReadSR1() & 0x01) != 0) {
+        if (timeout_ms == 0) return 0;
+        timeout_ms--;
+        Delay_ms(1);
+    }
+    return 1;
 }
 
 void W25Q_Init(void)
@@ -69,8 +98,7 @@ void W25Q_PageProgram(uint32_t addr, const uint8_t *buf, uint16_t length)
     W25Q_SPI_RW((uint8_t)(addr));
     while (length--) W25Q_SPI_RW(*buf++);
     W25Q_CS(1);
-    /* 等待写入完成(状态寄存器 BUSY 清零)，此处简化延时 */
-    { volatile uint32_t d; for (d = 0; d < 100000; d++); }
+    W25Q_WaitBusy(20);          /* 页编程典型 0.7ms，最大约 3ms */
 }
 
 void W25Q_SectorErase(uint32_t addr)
@@ -82,5 +110,5 @@ void W25Q_SectorErase(uint32_t addr)
     W25Q_SPI_RW((uint8_t)(addr >> 8));
     W25Q_SPI_RW((uint8_t)(addr));
     W25Q_CS(1);
-    { volatile uint32_t d; for (d = 0; d < 2000000; d++); }
+    W25Q_WaitBusy(1000);        /* 扇区擦除典型 45ms，最大 400ms */
 }

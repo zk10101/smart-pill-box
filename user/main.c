@@ -11,8 +11,8 @@
  *   bsp_lcd     ST7789 SPI 屏
  *   bsp_ws2812  彩灯×3
  *   bsp_esp32   ESP32-C3 无线(USART1)
- *   bsp_w25q    SPI Flash(存储/字库)
- *   bsp_audio   I2S 功放+麦克风
+ *   bsp_w25q    SPI Flash(存储/字库，硬件 FLASH_CS 未接，默认关闭)
+ *   bsp_audio   I2S 功放(麦克风为预留，未实现)
  *   state_machine 五态状态机
  * ============================================================
  */
@@ -35,14 +35,27 @@ volatile uint32_t g_ms = 0;     /* 系统 1ms 节拍 */
 /* 软件时钟（TODO: 接入内部 RTC + LSE，或由 ESP32/APP 对时） */
 static volatile uint8_t g_hour = 8, g_min = 0, g_sec = 0;
 
+/* ---- 独立看门狗: LSI 40kHz / 64 = 625Hz, 重装 2500 -> 约 4s 超时 ---- */
+static void IWDG_Init(void)
+{
+    RCC_LSICmd(ENABLE);
+    while (RCC_GetFlagStatus(RCC_FLAG_LSIRDY) == RESET);
+
+    IWDG_WriteAccessCmd(IWDG_WriteAccess_Enable);
+    IWDG_SetPrescaler(IWDG_Prescaler_64);
+    IWDG_SetReload(2500);
+    IWDG_ReloadCounter();
+    IWDG_Enable();
+}
+
 /* ---- ESP32 收到帧的回调 ---- */
 static void OnEsp32Frame(const ProtoFrame *f)
 {
     switch (f->cmd) {
-    case CMD_DETECT_RESULT:     /* 视觉检测结果: data[0]=状态码 */
-        /* 0x05 已取药 -> 复检通过；0x04 仍在 -> 继续复检 */
+    case CMD_DETECT_RESULT:     /* 视觉/传感器检测结果: data[0]=状态码 */
+        /* 只有 CHECK 阶段收到“已取药”才算复检通过，避免误触发其它状态 */
         if (f->len >= 1 && f->data[0] == STATUS_TAKEN) {
-            SM_OnKeyConfirm();  /* 复用确认路径 */
+            SM_OnPillTaken();
         }
         break;
     case CMD_SERVER_PUSH:       /* 云端下发：服药计划/设置，透传处理 */
@@ -64,11 +77,13 @@ void App_Tick1ms(void)
     g_ms++;
     Buzzer_Tick();
     Motor_Tick();
+    SM_Tick();
 }
 
 int main(void)
 {
     uint32_t last10ms = 0;      /* 10ms 任务节拍基准 */
+    uint32_t last1s   = 0;      /* 1s 时钟节拍基准 */
 
     NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
 
@@ -96,22 +111,36 @@ int main(void)
     WS2812_Show();
     Buzzer_Beep(200);
 
+    /* 所有外设初始化完成后再启动看门狗，避免长初始化被复位 */
+    IWDG_Init();
+
     while (1) {
+        IWDG_ReloadCounter();       /* 主循环健康即喂狗 */
+
         if (g_ms - last10ms >= 10) {
             last10ms = g_ms;
 
-            /* 软件时钟累加（TODO: 用 RTC 替代） */
-            if (++g_sec >= 60) { g_sec = 0; if (++g_min >= 60) { g_min = 0; if (++g_hour >= 24) g_hour = 0; } }
-
             Key_Scan();
 
-            /* 按键事件 -> 状态机 */
-            if (Key_GetEvent(KEY_ID_OK)   == KEY_EVT_SHORT) SM_OnKeyConfirm();
-            if (Key_GetEvent(KEY_ID_DN)   == KEY_EVT_SHORT) SM_OnKeyMute();   /* 静音 */
-            if (Key_GetEvent(KEY_ID_BACK) == KEY_EVT_LONG)  { /* 复位/回待机 */ SM_OnKeyMute(); }
-            (void)Key_GetEvent(KEY_ID_UP); /* 上键暂未用 */
+            /* 按键事件 -> 状态机（读事件会自动清除该键事件） */
+            if (Key_GetEvent(KEY_ID_OK)   == KEY_EVT_SHORT) SM_OnKeyConfirm();  /* 确认/已取药 */
+            if (Key_GetEvent(KEY_ID_DN)   == KEY_EVT_SHORT) SM_OnKeyMute();     /* 静音 */
+            if (Key_GetEvent(KEY_ID_BACK) == KEY_EVT_LONG)  SM_OnKeyMute();     /* 长按返回键：静音 */
+            (void)Key_GetEvent(KEY_ID_UP);                                      /* 上键暂未使用 */
 
             SM_Run(g_hour, g_min, g_sec);
+        }
+
+        /* 软件时钟：每 1000ms 才累加 1 秒（原实现每 10ms 加 1 秒，快 100 倍） */
+        if (g_ms - last1s >= 1000) {
+            last1s = g_ms;
+            if (++g_sec >= 60) {
+                g_sec = 0;
+                if (++g_min >= 60) {
+                    g_min = 0;
+                    if (++g_hour >= 24) g_hour = 0;
+                }
+            }
         }
 
         /* 串口协议轮询（每次循环都跑，及时处理帧） */
