@@ -2,15 +2,20 @@
 #define __PINMAP_H
 /**
  * ============================================================
- * 智能药盒 引脚分配表（依据嘉立创原理图 V1.0 逐脚核对）
- * 主控: STM32F103RCT6 (LQFP64, 256K Flash / 48K RAM)
- * 注意: PA15/PB3/PB4 是 JTAG 引脚，本工程已改用 SWD，
- *       关闭 JTAG 的动作在 bsp_audio.c 的 Audio_ReleaseJTAG()
- *       （GPIO_PinRemapConfig(GPIO_Remap_SWJ_JTAGDisable, ENABLE)）
+ * 智能药盒（执行机构版）引脚分配表
+ * 依据最终版原理图：Schematic1_1 / Board1_1 / 单页 A4 / V1.0
+ * 主控: STM32F103RCT6 (LQFP64, 256K Flash / 48K RAM, 72MHz)
+ *
+ * 【层次约定】本文件只允许被 bsp/ 目录（数据访问层）包含。
+ *           业务层(app_actuator/app_power)与表现层(app_command/app_ui)
+ *           不得直接引用任何引脚宏或寄存器。
+ *
+ * 注: PA15/PB3 是 JTAG 引脚，本工程只用 SWD，
+ *     Sys_Init() 中调用 GPIO_Remap_SWJ_JTAGDisable 释放。
  * ============================================================
  */
 
-/* ---------------- 按键 ×4（外部10k上拉，按下为低） ---------------- */
+/* ---------------- 按键 ×4（外部 10k 上拉 + 100nF，按下为低） -------- */
 #define KEY_UP_PORT         GPIOC
 #define KEY_UP_PIN          GPIO_Pin_0      /* PC0  KEY_UP  */
 #define KEY_DN_PORT         GPIOC
@@ -20,13 +25,15 @@
 #define KEY_BACK_PORT       GPIOC
 #define KEY_BACK_PIN        GPIO_Pin_3      /* PC3  KEY_BACK */
 
-/* ---------------- 步进电机（经 74HCT245 电平转换后输出） ----------------
- * 原理图实测: 245 的 A0/A1/A2(引脚3/4/5) 分别接网络 A1/A2/A3，
- *             B1/B2/B3(引脚17/16/15) 分别接 STEP/DIR/EN。
- * 网络对应 MCU: A1=PB8(pin61)、A2=PB9(pin62)、A3=PC12(pin53)
- * STEP 用定时器脉冲: PB8 = TIM4_CH3
- * 注意: 原代码把 EN 写成 PD2，但原理图 PD2(pin54) 为空脚，
- *       实际 EN 走 A3 = PC12，必须用 GPIOC Pin_12。 */
+/* ---------------- 步进电机（经 74HCT245D 缓冲后送驱动器插槽 U4） -----
+ * 245 的 A 侧分别接网络 A1/A2/A3，B 侧分别接 STEP/DIR/EN：
+ *   A1 = PB8  (pin61) -> B1 = STEP  (TIM4_CH3 输出脉冲)
+ *   A2 = PB9  (pin62) -> B2 = DIR
+ *   A3 = PC12 (pin53) -> B3 = EN
+ * 驱动插座 U4 = ZX-XH2.54-6PZZ: 1 STEP / 2 DIR / 3 EN / 4 FAULT_N / 5 VS / 6 GND
+ * EN 网络上有 R24 10k 下拉，常见驱动器 EN 为低有效（见 app_config.h 宏）
+ * FAULT_N 经 R4 1k 进 PC13，R3 10k 上拉到 3V3，低有效。
+ * !! PC13 不是 5V 容忍脚，长期 5V 直连需硬件串阻/钳位复核 !! */
 #define MOTOR_STEP_PORT     GPIOB
 #define MOTOR_STEP_PIN      GPIO_Pin_8      /* PB8  A1 -> STEP (TIM4_CH3) */
 #define MOTOR_DIR_PORT      GPIOB
@@ -34,84 +41,87 @@
 #define MOTOR_EN_PORT       GPIOC
 #define MOTOR_EN_PIN        GPIO_Pin_12     /* PC12 A3 -> EN   */
 #define MOTOR_FAULT_PORT    GPIOC
-#define MOTOR_FAULT_PIN     GPIO_Pin_13     /* PC13 FAULT_N 输入(低有效) */
+#define MOTOR_FAULT_PIN     GPIO_Pin_13     /* PC13 FAULT_N（低=故障） */
 
-/* ---------------- 限位传感器 ×2（外部10k上拉，触发为低） ---------------- */
+/* ---------------- 限位开关 ×2（10k 上拉 + 100nF，触发为低） ---------
+ * CN2 = LIM_ORG（原点），CN3 = LIM_POS（药仓/行程终点），均经 100R 串阻 */
 #define LIM_ORG_PORT        GPIOC
-#define LIM_ORG_PIN         GPIO_Pin_6      /* PC6  LIM_ORG 原点 */
+#define LIM_ORG_PIN         GPIO_Pin_6      /* PC6  LIM_ORG */
 #define LIM_POS_PORT        GPIOC
-#define LIM_POS_PIN         GPIO_Pin_7      /* PC7  LIM_POS 药仓 */
+#define LIM_POS_PIN         GPIO_Pin_7      /* PC7  LIM_POS */
 
-/* ---------------- SPI LCD（ST7789 类 4 线 SPI，共用 SPI1 总线） -------- */
+/* ---------------- SPI 彩屏（ST7789，SPI1 + 软件片选） ---------------
+ * 注意(硬件待复核): 屏 SDA 与 SPI1_MOSI 之间串联 R46 22R；
+ * 若实测屏无显示，请用万用表确认 R46 两端是否为 LCD_SDA <-> SPI1_MOSI。 */
 #define LCD_CS_PORT         GPIOA
-#define LCD_CS_PIN          GPIO_Pin_4      /* PA4  LCD_CS (软件CS, 10k上拉) */
+#define LCD_CS_PIN          GPIO_Pin_4      /* PA4  LCD_CS（10k 上拉） */
 #define LCD_DC_PORT         GPIOB
-#define LCD_DC_PIN          GPIO_Pin_0      /* PB0  LCD_DC (命令/数据) */
+#define LCD_DC_PIN          GPIO_Pin_0      /* PB0  LCD_DC */
 #define LCD_RES_PORT        GPIOB
-#define LCD_RES_PIN         GPIO_Pin_1      /* PB1  LCD_RES(复位, 低有效) */
+#define LCD_RES_PIN         GPIO_Pin_1      /* PB1  LCD_RES（低有效） */
 #define LCD_BL_PORT         GPIOB
-#define LCD_BL_PIN          GPIO_Pin_10     /* PB10 LCD_BL (经AO3401, 低电平=亮!) */
+#define LCD_BL_PIN          GPIO_Pin_10     /* PB10 LCD_BL（经 AO3401A，低=亮） */
 
-/* ---------------- SPI1 总线（LCD + W25Q64 共用） ----------------
- * !! 硬件问题(需改板): 原理图 R46 把 LCD_SDA 接到了 SPI1_MISO(PA6)，
- *    而 ST7789 的数据脚必须接 MOSI(PA7)。现板子上屏无法收到数据，
- *    固件仍按 MOSI 驱动；硬件需把屏的 SDA 改到 PA7（飞线/改 R46）。 */
+/* ---------------- SPI1 总线（屏 + W25Q64 预留） ---------------------
+ * R45 22R 串在 SPI1_SCK -> LCD_SCL */
 #define SPI1_SCK_PORT       GPIOA
 #define SPI1_SCK_PIN        GPIO_Pin_5      /* PA5  SPI1_SCK  */
 #define SPI1_MISO_PORT      GPIOA
-#define SPI1_MISO_PIN       GPIO_Pin_6      /* PA6  SPI1_MISO (W25Q DO) */
+#define SPI1_MISO_PIN       GPIO_Pin_6      /* PA6  SPI1_MISO */
 #define SPI1_MOSI_PORT      GPIOA
-#define SPI1_MOSI_PIN       GPIO_Pin_7       /* PA7  SPI1_MOSI (W25Q DI + 应为 LCD SDA) */
+#define SPI1_MOSI_PIN       GPIO_Pin_7      /* PA7  SPI1_MOSI */
 
-/* ---------------- W25Q64 SPI Flash ----------------
- * !! 原理图问题: FLASH_CS 网络没有连到任何 MCU 引脚，画板前需补 !!
- * 临时用 PA15? 不行(PA15=I2S3_WS)。先用 PB4 占位，待硬件确认后修改 */
-#define FLASH_CS_PORT       GPIOB
-#define FLASH_CS_PIN        GPIO_Pin_4      /* TODO: 待硬件补 FLASH_CS 后修改 */
-
-/* ---------------- ESP32-C3 无线模块（USART1） ---------------- */
+/* ---------------- 串口 1：ESP32-C3（上行 / 云端链路，本期只保留收发） ----
+ * PA9 TX -> 1k(R33) -> ESP32 RXD0(pin30)
+ * PA10 RX <- 1k(R32) <- ESP32 TXD0(pin31)
+ * PA8  NET_EN：ESP32 EN，10k 上拉，高电平使能 */
+#define UART1_TX_PORT       GPIOA
+#define UART1_TX_PIN        GPIO_Pin_9      /* PA9  USART1_TX */
+#define UART1_RX_PORT       GPIOA
+#define UART1_RX_PIN        GPIO_Pin_10     /* PA10 USART1_RX */
 #define NET_EN_PORT         GPIOA
-#define NET_EN_PIN          GPIO_Pin_8      /* PA8  NET_EN  模块使能(高有效) */
-#define NET_TX_PORT         GPIOA
-#define NET_TX_PIN          GPIO_Pin_9      /* PA9  USART1_TX -> ESP32 RXD0 */
-#define NET_RX_PORT         GPIOA
-#define NET_RX_PIN          GPIO_Pin_10     /* PA10 USART1_RX <- ESP32 TXD0 */
+#define NET_EN_PIN          GPIO_Pin_8      /* PA8  NET_EN */
 
-/* ---------------- 音频: MAX98357A 功放 (I2S3 发送) ----------------
- * I2S3: WS=PA15, CK=PB3, SD=PB5 (需关闭 JTAG 释放 PA15/PB3) */
-#define SPK_WS_PIN          GPIO_Pin_15     /* PA15 I2S3_WS -> LRCLK */
-#define SPK_CK_PIN          GPIO_Pin_3      /* PB3  I2S3_CK -> BCLK  */
-#define SPK_SD_PIN          GPIO_Pin_5      /* PB5  I2S3_SD -> DIN   */
+/* ---------------- 串口 2：摄像头（Sipeed MaixBit / K210，H1 接口） ----
+ * H1 = PZ254V-11-04P：1=5V_SW（SW3 手动开关供电）2=USART2_TX 3=USART2_RX 4=GND
+ * PA2/PA3 经 1k(R2/R47) 串阻连到 H1；K210 IO 为 3.3V，可直接相连。 */
+#define UART2_TX_PORT       GPIOA
+#define UART2_TX_PIN        GPIO_Pin_2      /* PA2  USART2_TX -> H1.2 */
+#define UART2_RX_PORT       GPIOA
+#define UART2_RX_PIN        GPIO_Pin_3      /* PA3  USART2_RX <- H1.3 */
 
-/* ---------------- 音频: ICS-43434 麦克风 (I2S2 接收) ---------------- */
-#define MIC_WS_PIN          GPIO_Pin_12     /* PB12 I2S2_WS */
-#define MIC_CK_PIN          GPIO_Pin_13     /* PB13 I2S2_CK */
-#define MIC_SD_PIN          GPIO_Pin_15     /* PB15 I2S2_SD */
+/* ---------------- 电源管理（IP5306） --------------------------------
+ * PWR_KEY(PC11) -> R1 10k -> Q3(MMBT3904) 基极；
+ * Q3 发射极接 IP5306 KEY(pin5)，集电极接 GND，
+ * 因此 PC11 输出高电平 = 按下 KEY（拉低），脉宽 100~150ms 实现开/关机。
+ * STBY_STAT(PC9) = 5V 轨经 100k/100k 分压 -> 高=5V 已建立（IP5306 升压输出正常）
+ * CHG_STAT (PC8) = VBUS_IN 经 100k/100k 分压 -> 高=USB 已插入
+ * 注意：两路都只是"电平存在"检测，不是 IP5306 的真实状态寄存器。 */
+#define PWR_KEY_PORT        GPIOC
+#define PWR_KEY_PIN         GPIO_Pin_11     /* PC11 PWR_KEY（输出，高=按下） */
+#define STBY_STAT_PORT      GPIOC
+#define STBY_STAT_PIN       GPIO_Pin_9      /* PC9  5V 存在检测 */
+#define CHG_STAT_PORT       GPIOC
+#define CHG_STAT_PIN        GPIO_Pin_8      /* PC8  USB 插入检测 */
 
-/* ---------------- 蜂鸣器（有源 2.7kHz，NPN 驱动，高电平响） ---------- */
+/* ---------------- 蜂鸣器（有源 2.7kHz，NPN 驱动，高电平响） ----------
+ * 最终版把蜂鸣器电源从 5V 改成了 3V3 */
 #define BUZZER_PORT         GPIOB
 #define BUZZER_PIN          GPIO_Pin_11     /* PB11 BUZ */
 
-/* ---------------- WS2812 彩灯 ×3（单线串行） ----------------
- * !! 硬件问题: 原理图把 WS2812B-2020 的 VDD 接在 3V3 上，
- *    该型号 VDD 规格为 3.7~5.3V，3.3V 供电会偏暗/颜色异常。
- *    建议改接 5V，并对 DIN 做电平转换(或用 3.3V 兼容灯珠)。 */
+/* ---------------- WS2812 彩灯 ×3（PA11 DIN，3V3 供电） --------------
+ * 硬件提示: WS2812B 系列 VDD 规格 3.7~5.3V，3V3 供电会偏暗/偏色 */
 #define WS2812_PORT         GPIOA
 #define WS2812_PIN          GPIO_Pin_11     /* PA11 WS2812_DIN */
 
-/* ---------------- 电源管理状态（IP5306） ---------------- */
-#define STBY_STAT_PORT      GPIOC
-#define STBY_STAT_PIN       GPIO_Pin_9      /* PC9  STBY_STAT */
-#define CHG_STAT_PORT       GPIOC
-#define CHG_STAT_PIN        GPIO_Pin_8      /* PC8  CHG_STAT */
-/* !! 原理图问题: BAT_ADC(电池分压)未接任何 MCU 引脚, PA0 空置
- *    建议硬件补: PA0(ADC12_IN0) <- BAT_ADC，补好后启用下行宏 !! */
-/* #define BAT_ADC_ON */
+/* ---------------- 电池电压采样（原理图未走线） ----------------------
+ * BAT -> R13 100k -> BAT_ADC -> R14 100k -> GND，BAT_ADC 未接到任何 MCU 脚；
+ * PA0(ADC12_IN0) 空闲。硬件补线后把 FEATURE_BAT_ADC 打开即可。 */
 #define BAT_ADC_PORT        GPIOA
-#define BAT_ADC_PIN         GPIO_Pin_0      /* PA0  建议接 BAT_ADC */
+#define BAT_ADC_PIN         GPIO_Pin_0      /* PA0（建议接 BAT_ADC） */
 
-/* ---------------- 时钟 ----------------
- * HSE: 8MHz (X1)  -> 系统时钟 72MHz
- * LSE: 32.768kHz (X2) -> 内部 RTC 走时 */
+/* ---------------- 时钟 --------------------------------------------
+ * HSE: 8MHz(X1) -> PLL -> 72MHz
+ * LSE: 32.768kHz(X2)，本版固件未使用 RTC */
 
 #endif /* __PINMAP_H */

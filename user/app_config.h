@@ -1,43 +1,64 @@
 #ifndef __APP_CONFIG_H
 #define __APP_CONFIG_H
+/**
+ * ============================================================
+ * 应用层可调参数（业务层/表现层使用，不含任何寄存器内容）
+ * 运行时可用 SET_PARAMS 指令覆盖（见 app_command.c），
+ * 掉电保存在内部 Flash 最后一页（bsp_flash.c）。
+ * ============================================================
+ */
 
-/* ================= 系统常量（可按验收调整） ================= */
+#define FW_VERSION              "V1.0"
+#define APP_NAME                "SMART-PILL-BOX-ACTUATOR"
 
-#define FW_VERSION            "V0.1"
+/* ================= 出药机构（步进） ================= */
+#define MOTOR_DEFAULT_STEPS_PER_PILL   800U    /* 一粒药 = 多少 STEP 脉冲（按机构标定） */
+#define MOTOR_DEFAULT_SPEED_HZ         800U    /* 默认脉冲频率 */
+#define MOTOR_MIN_SPEED_HZ             100U
+#define MOTOR_MAX_SPEED_HZ             4000U
 
-/* ================= 功能开关（硬件未就绪的功能先禁用） =================
- * 1) 电池电量检测: 原理图 BAT_ADC 分压网络没有接到任何 MCU 引脚
- *    (PA0 空置)，暂禁用，待硬件补线到 PA0 后开启
- * 2) 外部 W25Q64 存储: FLASH_CS 只接了上拉电阻，没有接到 MCU，
- *    暂禁用；服药计划改用内部 Flash 兜底
- *    后续硬件补好 FLASH_CS 线后，把下面宏改回 1 即可 */
-#define FEATURE_BAT_ADC       0
-#define FEATURE_EXT_FLASH     0
+/* 驱动器 EN 有效电平：U4.3(EN) 网络带 R24 10k 下拉，A4988/DRV8825/TMC 均为低有效 */
+#define MOTOR_DEFAULT_EN_ACTIVE_LOW    1U
+/* 方向取反：装配方向相反时置 1（可用 SET_PARAMS 的 flags.bit0 覆盖） */
+#define MOTOR_DEFAULT_DIR_INVERT       0U
 
-/* 出药机构 */
-#define MOTOR_TIMEOUT_MS      5000    /* 出药超时: 超过此时间未到限位则报错 */
-#define MOTOR_STEP_FREQ_HZ    800     /* STEP 脉冲频率 */
-#define MOTOR_STEPS_PER_PILL  800     /* 每粒药对应的步进脉冲数(待按机构标定) */
-/* 驱动器 EN 有效电平: 原理图 U4.3 EN 有 R24 10k 下拉，常见驱动(DRV8825/A4988/TMC)
- * 均为低有效，故默认 1。若实测“使能时应为高电平”，把此宏改成 0。 */
-#define MOTOR_EN_ACTIVE_LOW   1
+/* 回零：朝 LIM_ORG 走的最大步数与超时，触发后回退的步数 */
+#define MOTOR_HOME_MAX_STEPS           40000UL
+#define MOTOR_HOME_TIMEOUT_MS          15000UL
+#define MOTOR_HOME_BACKOFF_STEPS       40U
 
-/* 复检机制 (出药后等待用户取药；可用 ESP32 的 CMD_DETECT_RESULT 提前结束) */
-#define RECHECK_MAX_TIMES     3       /* 最多复检/催促次数, 超过判漏服 */
-#define RECHECK_INTERVAL_S    60      /* 复检/催促间隔(秒) */
+/* 单次运动超时（按 800 步/粒、800Hz 估算留足余量） */
+#define MOTOR_MOVE_TIMEOUT_MS          8000UL
+/* 单次指令允许的最大步数，防止参数错误把机构顶死 */
+#define MOTOR_MAX_STEPS_PER_MOVE       200000UL
 
-/* 提醒 */
-#define REMIND_BEEP_TIMES     3       /* 提醒轮数: 首次 + 重复提醒的次数, 用完仍未确认判漏服 */
-#define REMIND_RETRY_S        120     /* 未确认时重复提醒间隔(秒) */
+/* 出药粒数上限（一条指令） */
+#define DISPENSE_MAX_PILLS             10U
 
-/* 服药计划容量 */
-#define SCHEDULE_MAX          8       /* 最多 8 条服药计划 */
+/* ================= 电源（IP5306） ================= */
+#define POWER_KEY_PULSE_MS             120U    /* PWR_KEY 脉宽 */
+#define POWER_ON_WAIT_MS               800U    /* 等待 5V 建立 */
+#define POWER_OFF_WAIT_MS              400U
 
-/* 串口 */
-#define ESP32_BAUDRATE        115200
-#define RX_RING_SIZE          256     /* ESP32 接收环形缓冲区大小(2的幂) */
+/* ================= 时间 / 看门狗 ================= */
+#define IWDG_RELOAD_VALUE              2500U   /* LSI 40kHz / 64 ≈ 625Hz -> 4s */
+#define LOOP_TICK_MS                   1U
+#define UI_REFRESH_MS                  100U
 
-/* WS2812 */
-#define WS2812_NUM            3       /* 彩灯数量 */
+/* ================= 串口 ================= */
+#define UART_BAUDRATE                  115200U
+#define UART_RX_RING_SIZE              128U    /* 每通道接收环形缓冲(2的幂) */
+#define PROTO_MAX_DATA                 128U    /* 单帧数据区上限（LOG 帧最大 1+20*5=101） */
+#define PROTO_FRAME_TIMEOUT_MS         200U    /* 半帧超时，超时丢弃 */
+
+/* ================= 显示 / 提示 ================= */
+#define FEATURE_LCD                    1
+#define FEATURE_WS2812                 1
+#define FEATURE_LOGGING                1
+#define LOG_ENTRIES                    32U
+#define LOG_SEND_MAX                   20U     /* 单次 GET_LOG 最多回传条数 */
+
+/* ================= 电池采样（硬件未连，保持关闭） ================= */
+#define FEATURE_BAT_ADC                0
 
 #endif /* __APP_CONFIG_H */

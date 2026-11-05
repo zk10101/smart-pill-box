@@ -1,155 +1,123 @@
+#include "stm32f10x.h"
+#include "app_config.h"
+#include "app_port.h"
+#include "app_types.h"
+#include "app_actuator.h"
+#include "app_power.h"
+#include "app_ui.h"
+#include "app_command.h"
+
 /**
  * ============================================================
- *  智能药盒 - 主程序
- *  主控: STM32F103RCT6  库: 标准外设库  工具链: Keil MDK
+ * 平台启动层（main）
  *
- *  模块一览:
- *   bsp_key     按键×4
- *   bsp_buzzer  有源蜂鸣器
- *   bsp_motor   步进电机(TIM4 脉冲)
- *   bsp_limit   限位×2
- *   bsp_lcd     ST7789 SPI 屏
- *   bsp_ws2812  彩灯×3
- *   bsp_esp32   ESP32-C3 无线(USART1)
- *   bsp_w25q    SPI Flash(存储/字库，硬件 FLASH_CS 未接，默认关闭)
- *   bsp_audio   I2S 功放(麦克风为预留，未实现)
- *   state_machine 五态状态机
+ *   只做三件事：
+ *     1) 按依赖顺序初始化各层（数据访问 -> 业务 -> 表现）
+ *     2) 建立 1ms / 10ms / 50ms / 100ms 的时间片调度
+ *     3) 喂看门狗，并把"业务状态变化"作为事件上报给上位机
+ *
+ *   本文件不直接操作外设寄存器（IWDG 除外，它属于平台守护）。
  * ============================================================
  */
-#include "stm32f10x.h"
-#include "pinmap.h"
-#include "app_config.h"
-#include "bsp_key.h"
-#include "bsp_buzzer.h"
-#include "bsp_motor.h"
-#include "bsp_limit.h"
-#include "bsp_lcd.h"
-#include "bsp_ws2812.h"
-#include "bsp_esp32.h"
-#include "bsp_w25q.h"
-#include "bsp_audio.h"
-#include "state_machine.h"
 
-volatile uint32_t g_ms = 0;     /* 系统 1ms 节拍 */
-
-/* 软件时钟（TODO: 接入内部 RTC + LSE，或由 ESP32/APP 对时） */
-static volatile uint8_t g_hour = 8, g_min = 0, g_sec = 0;
-
-/* ---- 独立看门狗: LSI 40kHz / 64 = 625Hz, 重装 2500 -> 约 4s 超时 ---- */
-static void IWDG_Init(void)
+static void iwdg_init(void)
 {
+    /* LSI ≈ 40kHz，64 分频 => 625Hz，重装值 2500 => 约 4s 超时 */
     RCC_LSICmd(ENABLE);
-    while (RCC_GetFlagStatus(RCC_FLAG_LSIRDY) == RESET);
+    while (RCC_GetFlagStatus(RCC_FLAG_LSIRDY) == RESET) {
+    }
 
     IWDG_WriteAccessCmd(IWDG_WriteAccess_Enable);
     IWDG_SetPrescaler(IWDG_Prescaler_64);
-    IWDG_SetReload(2500);
+    IWDG_SetReload(IWDG_RELOAD_VALUE);
     IWDG_ReloadCounter();
     IWDG_Enable();
 }
 
-/* ---- ESP32 收到帧的回调 ---- */
-static void OnEsp32Frame(const ProtoFrame *f)
-{
-    switch (f->cmd) {
-    case CMD_DETECT_RESULT:     /* 视觉/传感器检测结果: data[0]=状态码 */
-        /* 只有 CHECK 阶段收到“已取药”才算复检通过，避免误触发其它状态 */
-        if (f->len >= 1 && f->data[0] == STATUS_TAKEN) {
-            SM_OnPillTaken();
-        }
-        break;
-    case CMD_SERVER_PUSH:       /* 云端下发：服药计划/设置，透传处理 */
-        /* TODO: 解析并更新服药计划 */
-        break;
-    case CMD_GET_STATUS:
-        {   uint8_t st = (uint8_t)SM_GetState();
-            ESP32_SendFrame(CMD_ACK, &st, 1);
-        }
-        break;
-    default:
-        break;
-    }
-}
+/* 上报用的状态快照 */
+static uint8_t  s_evt_state;
+static uint8_t  s_evt_error;
+static uint8_t  s_evt_pills;
 
-/* ---- 系统 1ms 节拍（在 SysTick 中断里调用） ---- */
-void App_Tick1ms(void)
+static void event_poll(void)
 {
-    g_ms++;
-    Buzzer_Tick();
-    Motor_Tick();
-    SM_Tick();
+    ActStatus st;
+
+    Act_GetStatus(&st);
+    if (st.state != s_evt_state ||
+        st.error != s_evt_error ||
+        st.pills_done != s_evt_pills) {
+        s_evt_state = st.state;
+        s_evt_error = st.error;
+        s_evt_pills = st.pills_done;
+        /* ev = 0xE0|state，a = error，b = 本次出药粒数 */
+        Cmd_ReportEvent((uint8_t)(0xE0 | st.state), st.error, st.pills_done);
+    }
 }
 
 int main(void)
 {
-    uint32_t last10ms = 0;      /* 10ms 任务节拍基准 */
-    uint32_t last1s   = 0;      /* 1s 时钟节拍基准 */
+    uint32_t t_1ms;
+    uint32_t t_10ms;
+    uint32_t t_50ms;
+    uint32_t t_100ms;
 
-    NVIC_PriorityGroupConfig(NVIC_PriorityGroup_2);
+    /* ---------- 数据访问层 ---------- */
+    Sys_Init();          /* 时钟确认、AFIO、释放 JTAG、1ms SysTick */
+    iwdg_init();
 
-    /* 系统节拍 1ms */
-    SysTick_Config(SystemCoreClock / 1000);
-
-    /* 初始化各外设 */
-    Buzzer_Init();
-    Key_Init();
-    Limit_Init();
     Motor_Init();
-    LCD_Init();         /* 内含 SPI1 初始化 */
-#if FEATURE_EXT_FLASH
-    W25Q_Init();        /* 复用 SPI1，仅 CS 独立（待硬件补 FLASH_CS 线后启用） */
-#endif
-    WS2812_Init();
-    ESP32_Init();
-    Audio_Init();
-    SM_Init();
+    Limit_Init();
+    Key_Init();
+    Buzzer_Init();
+    Led_Init();
+    Lcd_Init();
+    PwrHw_Init();
 
-    ESP32_SetRxHandler(OnEsp32Frame);
+    /* ---------- 业务逻辑层 ---------- */
+    Act_Init();
+    Pwr_Init();
 
-    /* 开机自检闪灯 */
-    WS2812_SetPixel(0, 0, 255, 0);
-    WS2812_Show();
-    Buzzer_Beep(200);
+    /* ---------- 表现层 ---------- */
+    Cmd_Init();          /* 内部完成 Uart_Init */
+    Ui_Init();
 
-    /* 所有外设初始化完成后再启动看门狗，避免长初始化被复位 */
-    IWDG_Init();
+    Buzzer_Beep(80);
+
+    s_evt_state = 0xFF;
+    s_evt_error = 0xFF;
+    s_evt_pills = 0xFF;
+
+    t_1ms   = Time_Ms();
+    t_10ms  = t_1ms;
+    t_50ms  = t_1ms;
+    t_100ms = t_1ms;
 
     while (1) {
-        IWDG_ReloadCounter();       /* 主循环健康即喂狗 */
+        IWDG_ReloadCounter();
 
-        if (g_ms - last10ms >= 10) {
-            last10ms = g_ms;
+        /* 串口收包要尽量勤，避免 128 字节环形缓冲被灌满 */
+        Cmd_Tick();
 
-            Key_Scan();
-
-            /* 按键事件 -> 状态机（读事件会自动清除该键事件） */
-            if (Key_GetEvent(KEY_ID_OK)   == KEY_EVT_SHORT) SM_OnKeyConfirm();  /* 确认/已取药 */
-            if (Key_GetEvent(KEY_ID_DN)   == KEY_EVT_SHORT) SM_OnKeyMute();     /* 静音 */
-            if (Key_GetEvent(KEY_ID_BACK) == KEY_EVT_LONG)  SM_OnKeyMute();     /* 长按返回键：静音 */
-            (void)Key_GetEvent(KEY_ID_UP);                                      /* 上键暂未使用 */
-
-            SM_Run(g_hour, g_min, g_sec);
+        if (Time_Elapsed(t_1ms, 1)) {
+            t_1ms = Time_Ms();
+            Buzzer_Tick();
+            Act_Tick();
         }
 
-        /* 软件时钟：每 1000ms 才累加 1 秒（原实现每 10ms 加 1 秒，快 100 倍） */
-        if (g_ms - last1s >= 1000) {
-            last1s = g_ms;
-            if (++g_sec >= 60) {
-                g_sec = 0;
-                if (++g_min >= 60) {
-                    g_min = 0;
-                    if (++g_hour >= 24) g_hour = 0;
-                }
-            }
+        if (Time_Elapsed(t_10ms, 10)) {
+            t_10ms += 10;
+            Ui_Tick();
         }
 
-        /* 串口协议轮询（每次循环都跑，及时处理帧） */
-        ESP32_Poll();
+        if (Time_Elapsed(t_50ms, 50)) {
+            t_50ms += 50;
+            event_poll();
+        }
+
+        if (Time_Elapsed(t_100ms, 100)) {
+            t_100ms += 100;
+            Ui_Refresh();
+        }
     }
-}
-
-/* SysTick 中断（stm32f10x_it.c 中的空定义已注释） */
-void SysTick_Handler(void)
-{
-    App_Tick1ms();
 }
