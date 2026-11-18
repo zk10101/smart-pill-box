@@ -108,6 +108,7 @@ void     Uart_Init(void);
 void     Uart_Write(uint8_t ch, const uint8_t *buf, uint16_t len);
 void     Uart_WriteByte(uint8_t ch, uint8_t b);
 uint8_t  Uart_Read(uint8_t ch, uint8_t *out);   /* 1=取到 1 字节 */
+uint16_t Uart_RxOverflowCount(uint8_t ch); /* 接收环形缓冲满时丢弃的字节数 */
 
 /* ---------------- 内部 Flash 参数存储 ---------------- */
 uint16_t Flash_ParamsCrc(const ActParams *p);   /* CRC16-CCITT 变体（不含 crc 字段） */

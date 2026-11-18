@@ -4,6 +4,7 @@
 #include "app_port.h"
 #include "app_types.h"
 #include "app_config.h"
+#include "app_command.h"
 
 /**
  * ============================================================
@@ -25,6 +26,9 @@ static struct {
     uint32_t position;
     uint16_t spp;
     uint16_t speed;
+    uint8_t  uart_ok;
+    uint8_t  wifi_ok;
+    uint8_t  mqtt_ok;
 } s_last;
 
 static uint8_t s_blink;
@@ -71,6 +75,9 @@ void Ui_Init(void)
     s_last.position = 0xFFFFFFFFUL;
     s_last.spp      = 0xFFFFU;
     s_last.speed    = 0;
+    s_last.uart_ok  = 0xFF;
+    s_last.wifi_ok  = 0xFF;
+    s_last.mqtt_ok  = 0xFF;
     s_blink         = 0;
     s_edit          = 0;
     s_draft_steps   = 0;
@@ -101,6 +108,10 @@ void Ui_Init(void)
     Lcd_Text(4, 174, "LONG BK=CALIBRATE", LCD_GRAY, LCD_BLACK, 1);
     Lcd_Text(4, 186, "UP/DN=STEP OK=SAVE", LCD_GRAY, LCD_BLACK, 1);
     Lcd_Text(4, 200, "LONG OK=STOP", LCD_GRAY, LCD_BLACK, 1);
+    Lcd_HLine(0, 210, LCD_W, LCD_DARK);
+    Lcd_Text(4, 214, "ESP:", LCD_GRAY, LCD_BLACK, 1);
+    Lcd_Text(76, 214, "WIFI:", LCD_GRAY, LCD_BLACK, 1);
+    Lcd_Text(4, 226, "MQTT:", LCD_GRAY, LCD_BLACK, 1);
 #endif
 }
 
@@ -191,8 +202,12 @@ void Ui_Refresh(void)
 {
     ActStatus st;
     uint8_t   err_on;
+    uint8_t   uart_ok;
+    uint8_t   wifi_ok;
+    uint8_t   mqtt_ok;
 
     Act_GetStatus(&st);
+    Cmd_GetLinkStatus(&uart_ok, &wifi_ok, &mqtt_ok);
     err_on = (uint8_t)(st.state == ACT_ST_ERROR);
 
     /* ---- WS2812 状态灯 ---- */
@@ -270,6 +285,18 @@ void Ui_Refresh(void)
         show_str(96, 152, (st.flags & 0x08) ? "1" : "0", (st.flags & 0x08) ? LCD_RED : LCD_GRAY);
         show_str(160, 152, (st.flags & 0x10) ? "RUN" : "STP",
                  (st.flags & 0x10) ? LCD_YELLOW : LCD_GRAY);
+    }
+    if (uart_ok != s_last.uart_ok) {
+        s_last.uart_ok = uart_ok;
+        show_str(40, 214, uart_ok ? "ON " : "OFF", uart_ok ? LCD_GREEN : LCD_RED);
+    }
+    if (wifi_ok != s_last.wifi_ok) {
+        s_last.wifi_ok = wifi_ok;
+        show_str(116, 214, wifi_ok ? "ON " : "OFF", wifi_ok ? LCD_GREEN : LCD_GRAY);
+    }
+    if (mqtt_ok != s_last.mqtt_ok) {
+        s_last.mqtt_ok = mqtt_ok;
+        show_str(44, 226, mqtt_ok ? "ON " : "OFF", mqtt_ok ? LCD_GREEN : LCD_GRAY);
     }
 #endif
 }

@@ -24,3 +24,6 @@ DebugConfig/
 # Keil 命令行构建日志
 build.log
 *.build_log.htm
+
+# Local Wi-Fi and MQTT credentials
+esp32/zhinengyaohe_esp/local_config.h

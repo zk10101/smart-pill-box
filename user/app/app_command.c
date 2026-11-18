@@ -41,6 +41,8 @@
 #define CMD_EVENT       0x85
 #define CMD_SERVER_PUSH 0x90
 
+#define LINK_TIMEOUT_MS 10000U
+
 #define CH_ESP32        UART_CH_ESP32
 #define CH_CAM          UART_CH_CAM
 
@@ -62,6 +64,11 @@ typedef struct {
 } parser_t;
 
 static parser_t s_rx[2];
+static uint32_t s_last_ping_ms;
+static uint32_t s_last_net_ms;
+static uint8_t s_ping_seen;
+static uint8_t s_net_seen;
+static uint8_t s_net_flags;
 
 /* ------------------------------------------------------------ */
 
@@ -202,11 +209,42 @@ static void dispatch(uint8_t ch, uint8_t cmd, const uint8_t *d, uint8_t n)
 
     switch (cmd) {
     case CMD_HEARTBEAT:
-        send_ack(ch, cmd, CMD_ST_OK);
+        send_ack(ch, cmd, n == 0U ? CMD_ST_OK : CMD_ST_PARAM);
         break;
 
     case CMD_GET_STATUS:
-        send_status(ch);
+        if (n == 0U) send_status(ch);
+        else send_ack(ch, cmd, CMD_ST_PARAM);
+        break;
+
+    case CMD_LINK_PING:
+        if (n == 1U) {
+            uint8_t reply[7];
+            uint32_t uptime = Time_Ms();
+            s_last_ping_ms = uptime;
+            s_ping_seen = 1U;
+            reply[0] = d[0];
+            reply[1] = LINK_PROTO_VERSION;
+            reply[2] = (uint8_t)uptime;
+            reply[3] = (uint8_t)(uptime >> 8);
+            reply[4] = (uint8_t)(uptime >> 16);
+            reply[5] = (uint8_t)(uptime >> 24);
+            reply[6] = (uint8_t)Uart_RxOverflowCount(CH_ESP32);
+            send_frame(ch, CMD_LINK_PONG, reply, sizeof(reply));
+        } else {
+            send_ack(ch, cmd, CMD_ST_PARAM);
+        }
+        break;
+
+    case CMD_NET_STATUS:
+        if (n == 1U && (d[0] & ~0x03U) == 0U) {
+            s_net_flags = d[0];
+            s_last_net_ms = Time_Ms();
+            s_net_seen = 1U;
+            send_ack(ch, cmd, CMD_ST_OK);
+        } else {
+            send_ack(ch, cmd, CMD_ST_PARAM);
+        }
         break;
 
     case CMD_DISPENSE:
@@ -296,8 +334,7 @@ static void dispatch(uint8_t ch, uint8_t cmd, const uint8_t *d, uint8_t n)
         break;
 
     case CMD_SERVER_PUSH:
-        AppLog_Push(EVT_NONE, cmd, n);
-        send_ack(ch, cmd, CMD_ST_OK);
+        send_ack(ch, cmd, CMD_ST_PARAM); /* 云端业务协议未定，不能假报执行成功 */
         break;
 
     default:
@@ -376,6 +413,12 @@ void Cmd_Init(void)
 {
     Uart_Init();
 
+    s_ping_seen = 0U;
+    s_net_seen = 0U;
+    s_net_flags = 0U;
+    s_last_ping_ms = 0U;
+    s_last_net_ms = 0U;
+
     s_rx[0].state = PS_HEAD0;
     s_rx[1].state = PS_HEAD0;
     s_rx[0].t_last = Time_Ms();
@@ -408,4 +451,16 @@ void Cmd_ReportEvent(uint8_t ev, uint8_t a, uint8_t b)
     d[1] = a;
     d[2] = b;
     send_frame(CH_ESP32, CMD_EVENT, d, 3);
+}
+
+void Cmd_GetLinkStatus(uint8_t *uart_ok, uint8_t *wifi_ok, uint8_t *mqtt_ok)
+{
+    uint8_t uart = (uint8_t)(s_ping_seen &&
+        !Time_Elapsed(s_last_ping_ms, LINK_TIMEOUT_MS));
+    uint8_t net = (uint8_t)(uart && s_net_seen &&
+        !Time_Elapsed(s_last_net_ms, LINK_TIMEOUT_MS));
+
+    *uart_ok = uart;
+    *wifi_ok = (uint8_t)(net && (s_net_flags & 0x01U));
+    *mqtt_ok = (uint8_t)(net && (s_net_flags & 0x02U));
 }

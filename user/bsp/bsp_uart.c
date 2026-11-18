@@ -22,6 +22,7 @@
 static volatile uint8_t  s_ring[UART_CH_NUM][UART_RX_RING_SIZE];
 static volatile uint16_t s_head[UART_CH_NUM];   /* 写入位置 */
 static volatile uint16_t s_tail[UART_CH_NUM];   /* 读取位置 */
+static volatile uint16_t s_overflow[UART_CH_NUM];
 
 static void uart_gpio_init(void)
 {
@@ -66,6 +67,7 @@ void Uart_Init(void)
     for (ch = 0; ch < UART_CH_NUM; ch++) {
         s_head[ch] = 0;
         s_tail[ch] = 0;
+        s_overflow[ch] = 0;
     }
 
     uart_gpio_init();
@@ -91,8 +93,12 @@ static void uart_isr(uint8_t ch, USART_TypeDef *usart)
         uint8_t  data = (uint8_t)USART_ReceiveData(usart);
         uint16_t head = s_head[ch];
 
-        s_ring[ch][head & RING_MASK] = data;
-        s_head[ch] = (uint16_t)(head + 1U);
+        if ((uint16_t)(head - s_tail[ch]) < UART_RX_RING_SIZE) {
+            s_ring[ch][head & RING_MASK] = data;
+            s_head[ch] = (uint16_t)(head + 1U);
+        } else {
+            s_overflow[ch]++;
+        }
     }
 
     /* 溢出/噪声等错误：读 SR 再读 DR 清标志，防止反复进中断 */
@@ -123,6 +129,11 @@ uint8_t Uart_Read(uint8_t ch, uint8_t *out)
     *out = s_ring[ch][tail & RING_MASK];
     s_tail[ch] = (uint16_t)(tail + 1U);
     return 1;
+}
+
+uint16_t Uart_RxOverflowCount(uint8_t ch)
+{
+    return ch < UART_CH_NUM ? s_overflow[ch] : 0U;
 }
 
 void Uart_WriteByte(uint8_t ch, uint8_t b)
