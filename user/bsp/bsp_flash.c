@@ -18,7 +18,7 @@
  */
 
 #define PARAM_PAGE_ADDR     0x0803F800UL
-#define PARAM_MAGIC         0x5042U
+#define PARAM_MAGIC         0x5043U  /* 旧版 steps_per_pill 不可当作已标定的格距 */
 
 static uint16_t params_crc16(const uint8_t *p, uint16_t len)
 {

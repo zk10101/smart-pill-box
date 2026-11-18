@@ -18,13 +18,18 @@ static struct {
     uint8_t  state;
     uint8_t  error;
     uint8_t  flags;
-    uint8_t  pills;
+    uint8_t  current;
+    uint8_t  target;
+    uint8_t  valid;
+    uint8_t  edit;
     uint32_t position;
     uint16_t spp;
     uint16_t speed;
 } s_last;
 
 static uint8_t s_blink;
+static uint8_t s_edit;
+static uint16_t s_draft_steps;
 
 static const char *state_text(uint8_t st)
 {
@@ -43,7 +48,7 @@ static const char *error_text(uint8_t err)
     case ACT_ERR_NONE:       return "OK      ";
     case ACT_ERR_FAULT:      return "DRV FAULT";
     case ACT_ERR_TIMEOUT:    return "TIMEOUT ";
-    case ACT_ERR_NOT_HOMED:  return "NO HOME ";
+    case ACT_ERR_NOT_HOMED:  return "NO SLOT ";
     case ACT_ERR_NO_LIMIT:   return "NO LIMIT";
     case ACT_ERR_5V_OFF:     return "5V OFF  ";
     case ACT_ERR_BUSY:       return "BUSY    ";
@@ -59,11 +64,16 @@ void Ui_Init(void)
     s_last.state    = 0xFF;
     s_last.error    = 0xFF;
     s_last.flags    = 0xFF;
-    s_last.pills    = 0xFF;
+    s_last.current  = 0xFF;
+    s_last.target   = 0xFF;
+    s_last.valid    = 0xFF;
+    s_last.edit     = 0xFF;
     s_last.position = 0xFFFFFFFFUL;
-    s_last.spp      = 0;
+    s_last.spp      = 0xFFFFU;
     s_last.speed    = 0;
     s_blink         = 0;
+    s_edit          = 0;
+    s_draft_steps   = 0;
 
 #if FEATURE_WS2812
     Led_SetAll(0, 0, 20);
@@ -78,9 +88,9 @@ void Ui_Init(void)
 
     Lcd_Text(4, 44,  "STATE", LCD_GRAY, LCD_BLACK, 1);
     Lcd_Text(4, 58,  "ERR  ", LCD_GRAY, LCD_BLACK, 1);
-    Lcd_Text(4, 72,  "POS  ", LCD_GRAY, LCD_BLACK, 1);
-    Lcd_Text(4, 86,  "PILLS", LCD_GRAY, LCD_BLACK, 1);
-    Lcd_Text(4, 100, "SPP  ", LCD_GRAY, LCD_BLACK, 1);
+    Lcd_Text(4, 72,  "CUR  ", LCD_GRAY, LCD_BLACK, 1);
+    Lcd_Text(4, 86,  "TARGET", LCD_GRAY, LCD_BLACK, 1);
+    Lcd_Text(4, 100, "STEP/30", LCD_GRAY, LCD_BLACK, 1);
     Lcd_Text(4, 114, "SPEED", LCD_GRAY, LCD_BLACK, 1);
     Lcd_HLine(0, 132, LCD_W, LCD_DARK);
     Lcd_Text(4, 138, "5V:", LCD_GRAY, LCD_BLACK, 1);
@@ -88,8 +98,8 @@ void Ui_Init(void)
     Lcd_Text(4, 152, "ORG:", LCD_GRAY, LCD_BLACK, 1);
     Lcd_Text(60, 152, "POS:", LCD_GRAY, LCD_BLACK, 1);
     Lcd_HLine(0, 168, LCD_W, LCD_DARK);
-    Lcd_Text(4, 174, "OK=DOSE UP=HOME", LCD_GRAY, LCD_BLACK, 1);
-    Lcd_Text(4, 186, "DN=CLR BK=5V", LCD_GRAY, LCD_BLACK, 1);
+    Lcd_Text(4, 174, "LONG BK=CALIBRATE", LCD_GRAY, LCD_BLACK, 1);
+    Lcd_Text(4, 186, "UP/DN=STEP OK=SAVE", LCD_GRAY, LCD_BLACK, 1);
     Lcd_Text(4, 200, "LONG OK=STOP", LCD_GRAY, LCD_BLACK, 1);
 #endif
 }
@@ -97,30 +107,50 @@ void Ui_Init(void)
 /* 处理一次按键动作 */
 static void ui_handle_key(uint8_t id, uint8_t ev)
 {
-    uint8_t rc = 0;
+    uint8_t rc;
+
+    if (ev == KEY_EVT_LONG && id == KEY_ID_OK) {
+        Act_Stop();
+        Buzzer_Beep(200);
+        return;
+    }
+    if (ev == KEY_EVT_LONG && id == KEY_ID_BACK) {
+        if (!Act_IsBusy()) {
+            ActParams p;
+            Act_GetParams(&p);
+            s_draft_steps = p.steps_per_slot;
+            s_edit = (uint8_t)!s_edit;
+            s_last.edit = 0xFF;
+            Buzzer_Beep(80);
+        }
+        return;
+    }
+
+    if (s_edit && ev == KEY_EVT_SHORT) {
+        if (id == KEY_ID_UP && s_draft_steps < 20000U) s_draft_steps++;
+        if (id == KEY_ID_DN && s_draft_steps > 1U) s_draft_steps--;
+        if (id == KEY_ID_OK) {
+            ActParams p;
+            Act_GetParams(&p);
+            p.steps_per_slot = s_draft_steps;
+            rc = Act_SetParams(&p);
+            if (rc == ACT_RC_OK) s_edit = 0;
+            Buzzer_Beep(rc == ACT_RC_OK ? 80 : 300);
+        }
+        if (id == KEY_ID_BACK) s_edit = 0;
+        return;
+    }
+
+    if (s_edit && ev == KEY_EVT_LONG) {
+        if (id == KEY_ID_UP && s_draft_steps <= 19900U) s_draft_steps += 100U;
+        if (id == KEY_ID_DN && s_draft_steps > 100U) s_draft_steps -= 100U;
+        return;
+    }
 
     if (ev == KEY_EVT_SHORT) {
         switch (id) {
-        case KEY_ID_OK:
-            rc = Act_Dispense(1);
-            Buzzer_Beep(rc == ACT_RC_OK ? 80 : 300);
-            AppLog_Push(EVT_CMD_DISPENSE, 1, rc);
-            return;
-        case KEY_ID_UP:
-            rc = Act_Home();
-            Buzzer_Beep(rc == ACT_RC_OK ? 80 : 300);
-            AppLog_Push(EVT_CMD_HOME, 0, rc);
-            return;
-        case KEY_ID_DN:
-            Act_ClearError();
-            Buzzer_Beep(50);
-            return;
         case KEY_ID_BACK:
-            if (Pwr_Is5V()) {
-                (void)Pwr_Shutdown5V();
-            } else {
-                (void)Pwr_Ensure5V();
-            }
+            Act_ClearError();
             Buzzer_Beep(50);
             return;
         default:
@@ -128,16 +158,6 @@ static void ui_handle_key(uint8_t id, uint8_t ev)
         }
     }
 
-    if (ev == KEY_EVT_LONG) {
-        if (id == KEY_ID_OK) {
-            Act_Stop();
-            Buzzer_Beep(200);
-            AppLog_Push(EVT_CMD_STOP, 0, 0);
-        } else if (id == KEY_ID_BACK) {
-            (void)Pwr_Shutdown5V();
-            Buzzer_Beep(200);
-        }
-    }
 }
 
 void Ui_Tick(void)
@@ -213,17 +233,30 @@ void Ui_Refresh(void)
         show_str(60, 58, error_text(st.error),
                  (st.error == ACT_ERR_NONE) ? LCD_GREEN : LCD_RED);
     }
-    if (st.position != s_last.position) {
-        s_last.position = st.position;
-        show_num(60, 72, (int32_t)st.position, LCD_WHITE);
+    if (st.current_slot != s_last.current || st.slot_valid != s_last.valid) {
+        s_last.current = st.current_slot;
+        s_last.valid = st.slot_valid;
+        if (st.slot_valid) {
+            show_num(60, 72, (int32_t)st.current_slot, LCD_GREEN);
+        } else {
+            Lcd_FillRect(60, 72, 48, 8, LCD_BLACK);
+            show_str(60, 72, "--", LCD_YELLOW);
+        }
     }
-    if (st.pills_done != s_last.pills) {
-        s_last.pills = st.pills_done;
-        show_num(60, 86, (int32_t)st.pills_done, LCD_YELLOW);
+    if (st.target_slot != s_last.target) {
+        s_last.target = st.target_slot;
+        if (st.target_slot) {
+            show_num(60, 86, (int32_t)st.target_slot, LCD_YELLOW);
+        } else {
+            Lcd_FillRect(60, 86, 48, 8, LCD_BLACK);
+            show_str(60, 86, "--", LCD_GRAY);
+        }
     }
-    if (st.steps_per_pill != s_last.spp) {
-        s_last.spp = st.steps_per_pill;
-        show_num(60, 100, (int32_t)st.steps_per_pill, LCD_WHITE);
+    if (st.steps_per_slot != s_last.spp || s_edit != s_last.edit ||
+        (s_edit && s_draft_steps != s_last.spp)) {
+        s_last.spp = s_edit ? s_draft_steps : st.steps_per_slot;
+        s_last.edit = s_edit;
+        show_num(72, 100, (int32_t)s_last.spp, s_edit ? LCD_YELLOW : LCD_WHITE);
     }
     if (st.speed_hz != s_last.speed) {
         s_last.speed = st.speed_hz;

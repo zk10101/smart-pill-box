@@ -12,23 +12,24 @@
 #define APP_NAME                "SMART-PILL-BOX-ACTUATOR"
 
 /* ================= 出药机构（步进） ================= */
-#define MOTOR_DEFAULT_STEPS_PER_PILL   800U    /* 一粒药 = 多少 STEP 脉冲（按机构标定） */
+#define SLOT_COUNT                     12U
+#define MOTOR_DEFAULT_STEPS_PER_SLOT   0U      /* 未标定前禁止运动 */
 #define MOTOR_DEFAULT_SPEED_HZ         800U    /* 默认脉冲频率 */
 #define MOTOR_MIN_SPEED_HZ             100U
 #define MOTOR_MAX_SPEED_HZ             4000U
 
-/* 驱动器 EN 有效电平：U4.3(EN) 网络带 R24 10k 下拉，A4988/DRV8825/TMC 均为低有效 */
-#define MOTOR_DEFAULT_EN_ACTIVE_LOW    1U
+/* X28S PLC 版 EN 极性必须按卖家接线说明现场确认；当前默认高有效。 */
+#define MOTOR_DEFAULT_EN_ACTIVE_LOW    0U      /* PLC 输入版：待现场确认 EN 极性 */
 /* 方向取反：装配方向相反时置 1（可用 SET_PARAMS 的 flags.bit0 覆盖） */
 #define MOTOR_DEFAULT_DIR_INVERT       0U
 
-/* 回零：朝 LIM_ORG 走的最大步数与超时，触发后回退的步数 */
+/* 旧回零参数保留在参数结构中，但 12 格转盘方案不使用机械回零。 */
 #define MOTOR_HOME_MAX_STEPS           40000UL
 #define MOTOR_HOME_TIMEOUT_MS          15000UL
 #define MOTOR_HOME_BACKOFF_STEPS       40U
 
 /* 单次运动超时（按 800 步/粒、800Hz 估算留足余量） */
-#define MOTOR_MOVE_TIMEOUT_MS          8000UL
+#define MOTOR_MOVE_TIMEOUT_MS          60000UL
 /* 单次指令允许的最大步数，防止参数错误把机构顶死 */
 #define MOTOR_MAX_STEPS_PER_MOVE       200000UL
 

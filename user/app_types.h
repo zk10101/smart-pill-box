@@ -10,9 +10,9 @@
 
 /* ---------------- 执行机构状态机 ---------------- */
 typedef enum {
-    ACT_ST_IDLE = 0,        /* 空闲（已回零或未标定） */
-    ACT_ST_HOMING,          /* 回零中 */
-    ACT_ST_MOVING,          /* 出药/移动中 */
+    ACT_ST_IDLE = 0,        /* 空闲 */
+    ACT_ST_HOMING,          /* 旧协议保留值，本期不使用 */
+    ACT_ST_MOVING,          /* 转盘移动中 */
     ACT_ST_ERROR            /* 故障保持（需 CLEAR_ERROR 或断电） */
 } ActState;
 
@@ -21,8 +21,8 @@ typedef enum {
     ACT_ERR_NONE = 0,
     ACT_ERR_FAULT,          /* 驱动器 FAULT_N 有效 */
     ACT_ERR_TIMEOUT,        /* 运动超时未到位 */
-    ACT_ERR_NOT_HOMED,      /* 未回零就要求出药 */
-    ACT_ERR_NO_LIMIT,       /* 回零过程始终找不到原点 */
+    ACT_ERR_NOT_HOMED,      /* 旧协议保留值 */
+    ACT_ERR_NO_LIMIT,       /* 旧协议保留值 */
     ACT_ERR_5V_OFF,         /* 5V 未建立（无法驱动电机/驱动器） */
     ACT_ERR_BUSY,           /* 正在执行其他动作 */
     ACT_ERR_PARAM,          /* 参数非法 */
@@ -54,11 +54,11 @@ typedef enum {
 /* ---------------- 运动参数（可在运行期设置并掉电保存） ---------------- */
 #pragma pack(1)
 typedef struct {
-    uint16_t steps_per_pill;
+    uint16_t steps_per_slot;
     uint16_t speed_hz;
-    uint8_t  en_active_low;     /* 1: EN 低有效（默认） 0: 高有效 */
+    uint8_t  en_active_low;     /* 1: EN 低有效，0: 高有效 */
     uint8_t  dir_invert;        /* 1: 方向取反 */
-    uint16_t home_backoff;      /* 回零触发后回退步数 */
+    uint16_t home_backoff;      /* 保留字段，本期固定为 0 */
     uint16_t move_timeout_10ms; /* 运动超时，单位 10ms */
     uint16_t crc;               /* 简单校验（Flash 存储用） */
 } ActParams;
@@ -76,10 +76,12 @@ typedef struct {
 typedef struct {
     uint8_t  state;             /* ActState */
     uint8_t  error;             /* ActError */
-    uint8_t  flags;             /* bit0:5V 已建立 bit1:USB 在位 bit2:原点限位 bit3:终点限位 bit4:电机运行 */
-    uint8_t  pills_done;        /* 最近一次出药实际完成粒数 */
-    uint32_t position;          /* 距原点步数 */
-    uint16_t steps_per_pill;
+    uint8_t  flags;             /* bit0:5V bit1:USB bit2/3:限位 bit4:运行 bit5:格号有效 */
+    uint8_t  current_slot;      /* 0=未知；1..12 */
+    uint8_t  target_slot;       /* 0=无目标；1..12 */
+    uint8_t  slot_valid;        /* 上次动作完整结束后的预测位置 */
+    uint32_t position;          /* 本次动作完成的累计脉冲 */
+    uint16_t steps_per_slot;
     uint16_t speed_hz;
 } ActStatus;
 

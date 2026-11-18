@@ -35,7 +35,7 @@ void     PwrHw_NetEnable(uint8_t on);   /* ESP32 EN */
 /* ---------------- 步进电机（TIM4 脉冲 + 方向/使能/故障） ---------------- */
 void     Motor_Init(void);
 void     Motor_SetSpeed(uint16_t hz);
-void     Motor_SetDir(uint8_t forward); /* 1=正向（出药方向）  0=反向（回零方向） */
+void     Motor_SetDir(uint8_t forward); /* 1=正向，0=反向 */
 void     Motor_Enable(uint8_t on);
 uint8_t  Motor_IsEnabled(void);
 void     Motor_Start(uint32_t steps);   /* 发 steps 个脉冲后自动停；0=非法 */

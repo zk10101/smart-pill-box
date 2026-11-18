@@ -37,7 +37,7 @@ static void iwdg_init(void)
 /* 上报用的状态快照 */
 static uint8_t  s_evt_state;
 static uint8_t  s_evt_error;
-static uint8_t  s_evt_pills;
+static uint8_t  s_evt_slot;
 
 static void event_poll(void)
 {
@@ -46,12 +46,14 @@ static void event_poll(void)
     Act_GetStatus(&st);
     if (st.state != s_evt_state ||
         st.error != s_evt_error ||
-        st.pills_done != s_evt_pills) {
+        st.current_slot != s_evt_slot) {
+        if (s_evt_state == ACT_ST_MOVING && st.state == ACT_ST_IDLE && st.slot_valid) {
+            Cmd_ReportEvent(EVT_MOVE_DONE, st.current_slot, 0);
+        }
         s_evt_state = st.state;
         s_evt_error = st.error;
-        s_evt_pills = st.pills_done;
-        /* ev = 0xE0|state，a = error，b = 本次出药粒数 */
-        Cmd_ReportEvent((uint8_t)(0xE0 | st.state), st.error, st.pills_done);
+        s_evt_slot = st.current_slot;
+        Cmd_ReportEvent((uint8_t)(0xE0 | st.state), st.error, st.current_slot);
     }
 }
 
@@ -86,7 +88,7 @@ int main(void)
 
     s_evt_state = 0xFF;
     s_evt_error = 0xFF;
-    s_evt_pills = 0xFF;
+    s_evt_slot = 0xFF;
 
     t_1ms   = Time_Ms();
     t_10ms  = t_1ms;

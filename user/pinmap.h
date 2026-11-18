@@ -31,7 +31,8 @@
  *   A2 = PB9  (pin62) -> B2 = DIR
  *   A3 = PC12 (pin53) -> B3 = EN
  * 驱动插座 U4 = ZX-XH2.54-6PZZ: 1 STEP / 2 DIR / 3 EN / 4 FAULT_N / 5 VS / 6 GND
- * EN 网络上有 R24 10k 下拉，常见驱动器 EN 为低有效（见 app_config.h 宏）
+ * 本期信号引至外置 12V X28S PLC 输入版，VS 不接电机 V+；
+ * COM 与 EN 极性待核对电机接线说明，详见 docs/12格转盘接线与联调.md。
  * FAULT_N 经 R4 1k 进 PC13，R3 10k 上拉到 3V3，低有效。
  * !! PC13 不是 5V 容忍脚，长期 5V 直连需硬件串阻/钳位复核 !! */
 #define MOTOR_STEP_PORT     GPIOB

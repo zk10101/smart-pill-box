@@ -29,6 +29,8 @@
 #define CMD_GET_PARAMS  0x14
 #define CMD_CLEAR_ERROR 0x15
 #define CMD_PWR_5V      0x16
+#define CMD_MOVE_SLOT   0x17
+#define CMD_SYNC_SLOT   0x18
 #define CMD_GET_LOG     0x30
 #define CMD_CAM_TRIGGER 0x40
 #define CMD_CAM_RESULT  0x41
@@ -74,6 +76,8 @@ static uint8_t rc_to_status(uint8_t rc)
     case ACT_RC_5V_OFF:   return CMD_ST_5V_OFF;
     case ACT_RC_TIMEOUT:  return CMD_ST_TIMEOUT;
     case ACT_RC_LIMIT:    return CMD_ST_LIMIT;
+    case ACT_RC_POS_MISMATCH: return CMD_ST_POS_MISMATCH;
+    case ACT_RC_NOT_CALIBRATED: return CMD_ST_NOT_CALIBRATED;
     default:              return CMD_ST_FAULT;
     }
 }
@@ -114,24 +118,26 @@ static void send_ack(uint8_t ch, uint8_t cmd, uint8_t status)
 static void send_status(uint8_t ch)
 {
     ActStatus st;
-    uint8_t   d[12];
+    uint8_t   d[14];
 
     Act_GetStatus(&st);
 
     d[0] = st.state;
     d[1] = st.error;
     d[2] = st.flags;
-    d[3] = st.pills_done;
+    d[3] = st.current_slot;
     d[4] = (uint8_t)(st.position & 0xFF);
     d[5] = (uint8_t)((st.position >> 8) & 0xFF);
     d[6] = (uint8_t)((st.position >> 16) & 0xFF);
     d[7] = (uint8_t)((st.position >> 24) & 0xFF);
-    d[8] = (uint8_t)(st.steps_per_pill & 0xFF);
-    d[9] = (uint8_t)((st.steps_per_pill >> 8) & 0xFF);
+    d[8] = (uint8_t)(st.steps_per_slot & 0xFF);
+    d[9] = (uint8_t)((st.steps_per_slot >> 8) & 0xFF);
     d[10] = (uint8_t)(st.speed_hz & 0xFF);
     d[11] = (uint8_t)((st.speed_hz >> 8) & 0xFF);
 
-    send_frame(ch, CMD_STATUS, d, 12);
+    d[12] = st.target_slot;
+    d[13] = st.slot_valid;
+    send_frame(ch, CMD_STATUS, d, 14);
 }
 
 static void send_params(uint8_t ch)
@@ -141,8 +147,8 @@ static void send_params(uint8_t ch)
 
     Act_GetParams(&p);
 
-    d[0] = (uint8_t)(p.steps_per_pill & 0xFF);
-    d[1] = (uint8_t)((p.steps_per_pill >> 8) & 0xFF);
+    d[0] = (uint8_t)(p.steps_per_slot & 0xFF);
+    d[1] = (uint8_t)((p.steps_per_slot >> 8) & 0xFF);
     d[2] = (uint8_t)(p.speed_hz & 0xFF);
     d[3] = (uint8_t)((p.speed_hz >> 8) & 0xFF);
     d[4] = (uint8_t)((p.en_active_low ? 0x01 : 0x00) | (p.dir_invert ? 0x02 : 0x00));
@@ -189,6 +195,11 @@ static void dispatch(uint8_t ch, uint8_t cmd, const uint8_t *d, uint8_t n)
 {
     uint8_t rc;
 
+    if (ch == CH_CAM && cmd != CMD_CAM_RESULT) {
+        send_ack(ch, cmd, CMD_ST_PARAM);
+        return;
+    }
+
     switch (cmd) {
     case CMD_HEARTBEAT:
         send_ack(ch, cmd, CMD_ST_OK);
@@ -199,12 +210,7 @@ static void dispatch(uint8_t ch, uint8_t cmd, const uint8_t *d, uint8_t n)
         break;
 
     case CMD_DISPENSE:
-        if (n != 1) {
-            send_ack(ch, cmd, CMD_ST_PARAM);
-            break;
-        }
-        rc = Act_Dispense(d[0]);
-        send_ack(ch, cmd, rc_to_status(rc));
+        send_ack(ch, cmd, CMD_ST_PARAM); /* 旧按粒数动作已停用 */
         break;
 
     case CMD_STOP:
@@ -213,8 +219,7 @@ static void dispatch(uint8_t ch, uint8_t cmd, const uint8_t *d, uint8_t n)
         break;
 
     case CMD_HOME:
-        rc = Act_Home();
-        send_ack(ch, cmd, rc_to_status(rc));
+        send_ack(ch, cmd, CMD_ST_PARAM); /* 无原点开关时禁止盲目回零 */
         break;
 
     case CMD_SET_PARAMS:
@@ -225,7 +230,7 @@ static void dispatch(uint8_t ch, uint8_t cmd, const uint8_t *d, uint8_t n)
             ActParams p;
 
             Act_GetParams(&p);
-            p.steps_per_pill = (uint16_t)(((uint16_t)d[0] << 8) | d[1]);
+            p.steps_per_slot = (uint16_t)(((uint16_t)d[0] << 8) | d[1]);
             p.speed_hz       = (uint16_t)(((uint16_t)d[2] << 8) | d[3]);
             p.en_active_low  = (uint8_t)((d[4] & 0x01) ? 1 : 0);
             p.dir_invert     = (uint8_t)((d[4] & 0x02) ? 1 : 0);
@@ -239,6 +244,24 @@ static void dispatch(uint8_t ch, uint8_t cmd, const uint8_t *d, uint8_t n)
         send_params(ch);
         break;
 
+    case CMD_MOVE_SLOT:
+        if (ch != CH_ESP32 || n != 2) {
+            send_ack(ch, cmd, CMD_ST_PARAM);
+            break;
+        }
+        rc = Act_MoveToSlot(d[0], d[1]);
+        send_ack(ch, cmd, rc_to_status(rc));
+        break;
+
+    case CMD_SYNC_SLOT:
+        if (ch != CH_ESP32 || n != 1) {
+            send_ack(ch, cmd, CMD_ST_PARAM);
+            break;
+        }
+        rc = Act_SyncSlot(d[0]);
+        send_ack(ch, cmd, rc_to_status(rc));
+        break;
+
     case CMD_CLEAR_ERROR:
         Act_ClearError();
         send_ack(ch, cmd, CMD_ST_OK);
@@ -247,6 +270,10 @@ static void dispatch(uint8_t ch, uint8_t cmd, const uint8_t *d, uint8_t n)
     case CMD_PWR_5V:
         if (n != 1) {
             send_ack(ch, cmd, CMD_ST_PARAM);
+            break;
+        }
+        if (d[0] == 0U && Act_IsBusy()) {
+            send_ack(ch, cmd, CMD_ST_BUSY);
             break;
         }
         if (d[0]) {
@@ -261,16 +288,11 @@ static void dispatch(uint8_t ch, uint8_t cmd, const uint8_t *d, uint8_t n)
         break;
 
     case CMD_CAM_TRIGGER:
-        send_ack(ch, cmd, (uint8_t)(Cmd_TriggerCamera() ? CMD_ST_OK : CMD_ST_FAULT));
+        send_ack(ch, cmd, CMD_ST_PARAM); /* 摄像头流程本期不接入 */
         break;
 
     case CMD_CAM_RESULT:
-        if (n == 3) {
-            AppLog_Push(EVT_CAM_RESULT, d[1], d[2]);
-            /* 把识别结果转报给 ESP32：ev=EVT_CAM_RESULT, a=count, b=confidence */
-            Cmd_ReportEvent(EVT_CAM_RESULT, d[1], d[2]);
-        }
-        send_ack(ch, cmd, CMD_ST_OK);
+        send_ack(ch, cmd, CMD_ST_PARAM);
         break;
 
     case CMD_SERVER_PUSH:
@@ -386,13 +408,4 @@ void Cmd_ReportEvent(uint8_t ev, uint8_t a, uint8_t b)
     d[1] = a;
     d[2] = b;
     send_frame(CH_ESP32, CMD_EVENT, d, 3);
-}
-
-uint8_t Cmd_TriggerCamera(void)
-{
-    uint8_t st = (uint8_t)((Act_GetState() == ACT_ST_ERROR) ? CMD_ST_FAULT : CMD_ST_OK);
-
-    send_frame(CH_CAM, CMD_CAM_TRIGGER, (const uint8_t *)0, 0);
-    AppLog_Push(EVT_CAM_RESULT, 0xFF, 0);   /* 0xFF = 已触发、等结果 */
-    return (uint8_t)(st == CMD_ST_OK);
 }
