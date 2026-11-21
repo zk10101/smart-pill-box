@@ -10,7 +10,7 @@
 
 1. STM32 使用本仓库 Keil 工程烧录。ESP 使用 Arduino-ESP32 的 ESP32-C3 板型；依赖 `PubSubClient`。请将真实 Wi-Fi/MQTT 参数写入草图同目录的 `local_config.h`，字段模板见 `local_config.example.h`。该文件已被 Git 忽略，不要把密码提交到 GitHub。没有 Wi-Fi/MQTT 参数时，ESP 仍可完成 UART 诊断。
 2. 板上 ESP 的 RXD0/TXD0 分别经 1k 接 STM32 PA9 TX/PA10 RX；ESP 的 GPIO20=RXD0、GPIO21=TXD0，固件用这两脚跑 115200-8N1。STM32 PA8 控制 ESP EN，高电平使能。不要把 12V 接入这条串口。
-3. 板上 H3 只引出 IO9/GND，未看到独立的 ESP USB 下载接口。若使用 UART0 烧录，需要可接触 ESP RXD0/TXD0、IO9、GND、3V3/EN 的编程点，并防止 STM32 TX 与下载器 TX 同时驱动 ESP RXD0。先确认实板的编程方式和 3.3V 供电能力，再接下载器。
+3. 板上 H3 只引出 IO9/GND，不能单独传送烧录数据。首次烧录可使用 [STM32 临时串口烧录桥](../tools/esp_flash_bridge/README.md)：电脑 USB-TTL 接 H1 的 USART2，STM32 透传到已连好的 ESP UART0；H3 把 IO9 拉低。桥程序烧入 STM32 后再用 esptool 烧 ESP，最后恢复正常 STM32 固件。
 4. 原理图评审记录 ESP32-C3 地焊盘阵列可能未接 GND；如实板确实不导通，先补接地再做 Wi-Fi 稳定性测试。
 
 ## 分段证明

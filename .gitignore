@@ -24,6 +24,10 @@ DebugConfig/
 # Keil 命令行构建日志
 build.log
 *.build_log.htm
+tools/esp_flash_bridge/BridgeObjects/
+tools/esp_flash_bridge/BridgeListings/
+tools/esp_flash_bridge/*.uvoptx
+tools/esp_flash_bridge/build.log
 
 # Local Wi-Fi and MQTT credentials
 esp32/zhinengyaohe_esp/local_config.h
